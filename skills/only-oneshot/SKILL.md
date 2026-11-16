@@ -1,11 +1,11 @@
 ---
 name: only-oneshot
-description: Build an app from a single spec prompt that acts as its source code. Every later correction or follow-up is written into that spec (never patched into the code). The app folder is then wiped and a fresh subagent rebuilds the whole app from the amended spec alone, and the parent checks the result. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
+description: Build an app from a spec prompt that acts as its source code (one file, or a tree of spec files for large apps). Every later correction or follow-up is written into that spec (never patched into the code). The app folder is then wiped and a fresh subagent rebuilds the whole app from the amended spec alone, and the parent checks the result. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
 ---
 
 # Only-oneshot: the prompt is the source, the code is the binary
 
-The spec (`ONESHOT.md`) is the source of truth. The app code is a build output: disposable,
+The spec (`ONESHOT.md`, plus sub-spec files under `spec/` for large apps) is the source of truth. The app code is a build output: disposable,
 regenerated from the spec, never edited by hand. When this skill finishes, the user has (1) a working
 app and (2) a complete spec that rebuilds it from nothing, on any model, at any time.
 
@@ -16,7 +16,8 @@ the app is rebuilt from scratch. (The single exception: the user explicitly says
 
 ```
 <project>/
-  ONESHOT.md        the spec (source). The only thing the builder sees.
+  ONESHOT.md        the spec (source), or its top level for a large app. The builder sees only spec files.
+  spec/             optional sub-specs for large apps (see "Large apps").
   app/              generated app (binary). Wiped before every build.
   .oneshot/log.md   history: the user's messages verbatim, spec changes, build results.
   .oneshot/runs/    optional side-by-side builds for comparing models (see "Compare").
@@ -70,12 +71,46 @@ Rules:
   chance, describe it concretely in the spec so it's kept.
 - Add an acceptance check for each amendment, plus checks for earlier requirements that matter.
 
+## Large apps: a tree of spec files
+
+Default is a single `ONESHOT.md`; most small and mid-size apps fit in one file. Split only when one
+file stops being readable (roughly 400+ lines) or the app has clearly separate parts that would
+benefit from being generated in parallel. When you split, tell the user and why. A split spec can be
+merged back into one file later if the app shrinks.
+
+```
+ONESHOT.md                 top level: the whole app at a glance
+spec/
+  auth.md                  one file per part (feature, screen, service, ...)
+  feed/README.md           a part can be a folder with its own sub-files
+  feed/ranking.md
+  shared/data-model.md     contracts several parts depend on
+```
+
+- **`ONESHOT.md` stays a complete summary.** Goal, stack, architecture overview (the parts and how
+  they fit together), cross-cutting requirements (look and feel, performance, accessibility),
+  end-to-end acceptance checks, and a **Parts** list linking every sub-spec with a one-line summary.
+  Someone reading only this file understands what the app is and how it hangs together.
+- **Every spec file is reachable from `ONESHOT.md`** through links. A file nothing links to doesn't exist
+  as far as the builder is concerned.
+- **Each part file** has: what this part does, `Lives in:` (the folders under `app/` it owns, so
+  parallel builders don't collide), `Depends on:` (links to other parts or shared contracts), its
+  requirements, and its own acceptance checks. A folder part uses `README.md` as its top, pointing
+  to its own sub-files the same way.
+- **Shared contracts** (data model, API shapes, events, design tokens) live in exactly one file, under
+  `spec/shared/`, and every part that uses them links there instead of restating them.
+- **Amendments go in the most specific file that owns the behavior.** Update `ONESHOT.md` as well
+  when the change affects the overview, the parts list, a cross-cutting rule or an end-to-end check.
+  A change touching several parts usually belongs in a shared contract or the top level.
+- All the writing rules above (positive phrasing, negation review, no references to past builds)
+  apply to every file.
+
 ## The loop (every round)
 
 Round 0 is the user's first message. Every later message about the app is a new round.
 
 1. **Log** the user's message verbatim in `.oneshot/log.md` under `## Round N`.
-2. **Amend** `ONESHOT.md` (round 0: write it). In the log, note in one or two lines what changed in
+2. **Amend** the spec (round 0: write it; split it only if "Large apps" calls for it). In the log, note in one or two lines what changed in
    the spec and why.
 3. **Commit** everything: `git add -A && git commit -m "round N: <summary>"`. This keeps the
    previous app build and spec revertible.
@@ -83,8 +118,10 @@ Round 0 is the user's first message. Every later message about the app is a new 
    in `/app` first; never wipe anything else).
 5. **Build** with a fresh subagent (Agent tool, `general-purpose`, foreground). Its prompt is
    exactly the builder brief below with the full spec pasted in. Nothing else: no log, no past
-   feedback, no hints from earlier builds.
-6. **Verify** yourself (the parent): go through every acceptance check, with extra care on this
+   feedback, no hints from earlier builds. For a split spec, either paste every spec file into one
+   builder (fine while it all fits comfortably), or build in parallel (see "Parallel build").
+   Every round still rebuilds the whole app from scratch, even if only one part's spec changed.
+6. **Verify** yourself (the parent): go through every acceptance check in every spec file, with extra care on this
    round's amendment. Use real evidence: build it, run tests, start it and hit it, take a headless
    screenshot of UI and look at it (stop any server you start). Record pass/fail per check in the log.
 7. **If anything fails:** treat it as a spec problem. Decide why the builder missed it (ambiguous,
@@ -107,6 +144,21 @@ Round 0 is the user's first message. Every later message about the app is a new 
 >
 > --- SPECIFICATION ---
 > <full contents of ONESHOT.md>
+> (split spec: then each sub-spec, headed `--- spec/<path> ---`, in the order ONESHOT.md lists them)
+
+### Parallel build (split specs only)
+
+1. **Scaffold:** one builder gets `ONESHOT.md` and `spec/shared/`. It sets up the project skeleton
+   in `app/` (stack, folder layout matching every part's `Lives in:`, shared contracts as real
+   code: types, schemas, API stubs, design tokens) and stops there.
+2. **Parts:** one builder per part, in parallel (several Agent calls in one message). Each gets
+   `ONESHOT.md`, its own part file(s), and the files its `Depends on:` links to, nothing else. It
+   writes only inside its `Lives in:` folders and codes against the shared contracts as scaffolded.
+   It still must not read `.oneshot/` or git history.
+3. **Integrate:** one builder gets the whole spec, wires the parts together, makes the app build and
+   run, and runs the end-to-end checks.
+Then the parent verifies as usual. If a part fails, fix its spec and rerun the whole round; the
+scaffold → parts → integrate shape stays the same every time.
 
 Model: default is the current model. If the user names one ("build with sonnet"), pass it as the
 Agent `model`. For another provider's model, use whatever delegation tool the harness offers, with the same brief.

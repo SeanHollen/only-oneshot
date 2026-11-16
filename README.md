@@ -30,6 +30,18 @@ Inspired by [this post from Taelin](https://x.com/victortaelin/status/2120912867
 - **Every requirement has an acceptance check** that the parent verifies with real evidence
   (it runs the app, takes screenshots, runs tests).
 
+## Large apps
+
+Most apps fit in one `ONESHOT.md`. For a large one, the spec becomes a tree: `ONESHOT.md` stays a
+complete high-level summary (goal, architecture, cross-cutting rules, end-to-end checks) and links
+to sub-specs under `spec/`. There's one file per part, each saying which folders of the app it owns
+and what it depends on, and shared contracts (data model, API shapes) live in `spec/shared/`.
+Read the top file for the overview, or follow the links for the details.
+
+A split spec can be built by one builder, or in parallel: a scaffold builder sets up the skeleton and
+shared contracts, one builder per part fills in its own folders, and an integration builder wires
+it all together. Every round still regenerates the whole app from scratch.
+
 ## Install
 
 ```sh
@@ -50,7 +62,8 @@ Every later message in that conversation counts as an amendment to the spec. To 
 
 ```
 <project>/
-  ONESHOT.md        the spec: the only thing the builder subagent sees
+  ONESHOT.md        the spec (or its top level): spec files are all the builder sees
+  spec/             sub-specs, only for large apps
   app/              generated app, wiped before every build
   .oneshot/log.md   your messages verbatim, how the spec changed, check results per build
   .oneshot/runs/    side-by-side builds for model comparisons
