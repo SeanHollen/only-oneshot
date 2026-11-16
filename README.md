@@ -1,4 +1,4 @@
-# one-shot
+# only-oneshot
 
 A Claude Code skill that treats your **prompt as the source code** and the generated app as a
 **compiled binary**.
@@ -33,14 +33,14 @@ Inspired by [this post from Taelin](https://x.com/victortaelin/status/2120912867
 ## Install
 
 ```sh
-git clone https://github.com/SeanHollen/one-shot
-ln -s "$PWD/one-shot/skills/one-shot" ~/.claude/skills/one-shot
+git clone https://github.com/SeanHollen/only-oneshot
+ln -s "$PWD/only-oneshot/skills/only-oneshot" ~/.claude/skills/only-oneshot
 ```
 
 Then in Claude Code:
 
 ```
-/one-shot Build a tip calculator web page as a single HTML file...
+/only-oneshot Build a tip calculator web page as a single HTML file...
 ```
 
 Every later message in that conversation counts as an amendment to the spec. To compare models:

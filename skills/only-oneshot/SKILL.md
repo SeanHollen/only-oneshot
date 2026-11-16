@@ -1,9 +1,9 @@
 ---
-name: one-shot
-description: Build an app from a single spec prompt that acts as its source code. Every later correction or follow-up is written into that spec (never patched into the code). The app folder is then wiped and a fresh subagent rebuilds the whole app from the amended spec alone, and the parent checks the result. Use when the user says "one shot", "/one-shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
+name: only-oneshot
+description: Build an app from a single spec prompt that acts as its source code. Every later correction or follow-up is written into that spec (never patched into the code). The app folder is then wiped and a fresh subagent rebuilds the whole app from the amended spec alone, and the parent checks the result. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
 ---
 
-# One-shot: the prompt is the source, the code is the binary
+# Only-oneshot: the prompt is the source, the code is the binary
 
 The spec (`ONESHOT.md`) is the source of truth. The app code is a build output: disposable,
 regenerated from the spec, never edited by hand. When this skill finishes, the user has (1) a working
