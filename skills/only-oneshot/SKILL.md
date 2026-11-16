@@ -148,7 +148,7 @@ Round 0 is the user's first message. Every later message about the app is a new 
 
 ### Parallel build (split specs only)
 
-1. **Scaffold:** one builder gets `ONESHOT.md` and `spec/shared/`. It sets up the project skeleton
+1. **Scaffold:** one builder gets the whole spec but builds only the skeleton. It sets up the project skeleton
    in `app/` (stack, folder layout matching every part's `Lives in:`, shared contracts as real
    code: types, schemas, API stubs, design tokens) and stops there.
 2. **Parts:** one builder per part, in parallel (several Agent calls in one message). Each gets
