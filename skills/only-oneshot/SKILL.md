@@ -1,24 +1,27 @@
 ---
 name: only-oneshot
-description: Build an app from a spec prompt that acts as its source code (one file, or a tree of spec files for large apps). Every later correction or follow-up is written into that spec (never patched into the code). The app folder is then wiped and a fresh subagent rebuilds the whole app from the amended spec alone, and the parent checks the result. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
+description: Build an app from a spec prompt that acts as its source code (one file, or a tree of module specs for large apps). Every later correction or follow-up is written into that spec (never patched into the code). Then the app, or only the affected modules, is deleted and fresh subagents regenerate it from the amended spec alone, and the parent checks the result. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
 ---
 
 # Only-oneshot: the prompt is the source, the code is the binary
 
-The spec (`ONESHOT.md`, plus sub-spec files under `spec/` for large apps) is the source of truth. The app code is a build output: disposable,
+The spec (`ONESHOT.md`, plus one spec file per module under `spec/` for large apps) is the source of truth. The app code is a build output: disposable,
 regenerated from the spec, never edited by hand. When this skill finishes, the user has (1) a working
 app and (2) a complete spec that rebuilds it from nothing, on any model, at any time.
 
 **The one rule:** never fix the app by editing its code. Every change goes into the spec, then
-the app is rebuilt from scratch. (The single exception: the user explicitly says "just patch the code".)
+the affected code is deleted and regenerated from scratch (the whole app, or only the affected
+modules of a modular app). (The single exception: the user explicitly says "just patch the code".)
 
 ## Layout
 
 ```
 <project>/
   ONESHOT.md        the spec (source), or its top level for a large app. The builder sees only spec files.
-  spec/             optional sub-specs for large apps (see "Large apps").
-  app/              generated app (binary). Wiped before every build.
+  spec/             optional module specs for large apps (see "Modular apps").
+  app/              generated app (binary). Wiped before every full build.
+  .oneshot/manifest.json  which code paths each module produced (modular apps; a build output, not spec).
+  .oneshot/wt/      temporary git worktrees for parallel module builders.
   .oneshot/log.md   history: the user's messages verbatim, spec changes, build results.
   .oneshot/runs/    optional side-by-side builds for comparing models (see "Compare").
 ```
@@ -71,66 +74,91 @@ Rules:
   chance, describe it concretely in the spec so it's kept.
 - Add an acceptance check for each amendment, plus checks for earlier requirements that matter.
 
-## Large apps: a tree of spec files
+## Modular apps: one spec file per module
 
-Default is a single `ONESHOT.md`; most small and mid-size apps fit in one file. Split only when one
-file stops being readable (roughly 400+ lines) or the app has clearly separate parts that would
-benefit from being generated in parallel. When you split, tell the user and why. A split spec can be
-merged back into one file later if the app shrinks.
+Default is a single `ONESHOT.md`; most small and mid-size apps fit in one file and are always
+rebuilt whole. Make the spec modular when the app has clearly separate concerns, or one file stops
+being readable (roughly 400+ lines). Tell the user when you split and why. "Module" is meant
+loosely: a package, service, feature folder, screen, crate, whatever the stack's natural unit is.
 
 ```
-ONESHOT.md                 top level: the whole app at a glance
+ONESHOT.md                 top level: the whole app at a glance + the module map
 spec/
-  auth.md                  one file per part (feature, screen, service, ...)
-  feed/README.md           a part can be a folder with its own sub-files
+  auth.md                  one file = one module
+  feed/README.md           a module can have submodules, each its own file
   feed/ranking.md
-  shared/data-model.md     contracts several parts depend on
+  shared/data-model.md     contracts several modules depend on
 ```
 
-- **`ONESHOT.md` stays a complete summary.** Goal, stack, architecture overview (the parts and how
-  they fit together), cross-cutting requirements (look and feel, performance, accessibility),
-  end-to-end acceptance checks, and a **Parts** list linking every sub-spec with a one-line summary.
-  Someone reading only this file understands what the app is and how it hangs together.
-- **Every spec file is reachable from `ONESHOT.md`** through links. A file nothing links to doesn't exist
-  as far as the builder is concerned.
-- **Each part file** has: what this part does, `Lives in:` (the folders under `app/` it owns, so
-  parallel builders don't collide), `Depends on:` (links to other parts or shared contracts), its
-  requirements, and its own acceptance checks. A folder part uses `README.md` as its top, pointing
-  to its own sub-files the same way.
-- **Shared contracts** (data model, API shapes, events, design tokens) live in exactly one file, under
-  `spec/shared/`, and every part that uses them links there instead of restating them.
-- **Amendments go in the most specific file that owns the behavior.** Update `ONESHOT.md` as well
-  when the change affects the overview, the parts list, a cross-cutting rule or an end-to-end check.
-  A change touching several parts usually belongs in a shared contract or the top level.
+- **Each spec file is one module with one concern.** Draw module boundaries so modules depend on
+  each other as little as possible and only through stated interfaces. That's what makes it
+  possible to regenerate one module without touching the rest.
+- **The spec asks for modular code.** The top level's Stack section states that the code is split
+  into modules matching the spec's module map, in whatever form is idiomatic for the stack, and
+  that modules talk to each other only through their stated interfaces.
+- **`ONESHOT.md` stays a complete summary:** goal, stack, the module map (every module, a one-line
+  purpose, a link to its spec, and what it depends on), cross-cutting requirements (look and feel,
+  performance, accessibility) and end-to-end acceptance checks. Someone reading only this file
+  understands the app and how its modules fit together.
+- **Each module file** has: its purpose, its **interface** (what it offers other modules:
+  functions, endpoints, components, events, in behavioral terms), `Depends on:` (links to other
+  modules or shared contracts), its requirements and its own acceptance checks. A module with
+  submodules uses `README.md` as its top file, pointing to its submodule files the same way.
+- **No file paths in the spec.** Where the code for a module lives is an implementation choice of
+  the builder; it's tracked in `.oneshot/manifest.json`, which is a build output.
+- **Shared contracts** (data model, API shapes, events, design tokens) live in exactly one file
+  under `spec/shared/`, and modules link to them instead of restating them.
+- **Every spec file is reachable from `ONESHOT.md`** through links.
+- **Amendments go in the module that owns the behavior.** Update `ONESHOT.md` too when the change
+  affects the overview, the module map, a cross-cutting rule or an end-to-end check. If a change
+  forces two modules to know about each other's internals, fix the boundary (move the behavior,
+  or add it to an interface or shared contract).
 - All the writing rules above (positive phrasing, negation review, no references to past builds)
   apply to every file.
+
+### The manifest
+
+`.oneshot/manifest.json` maps each module to the code paths it produced, taken from git diffs (see
+"Worktrees"), never from what a builder says it did:
+
+```json
+{"modules": {"auth": ["app/src/auth/**"], "feed": ["app/src/feed/**"]},
+ "integration": ["app/src/main.ts", "app/package.json", "app/src/routes.ts"]}
+```
+
+Glue that several modules touch (entry point, routing, dependency lists, build config) belongs to
+`integration`, which is regenerated whenever any module is.
 
 ## The loop (every round)
 
 Round 0 is the user's first message. Every later message about the app is a new round.
 
 1. **Log** the user's message verbatim in `.oneshot/log.md` under `## Round N`.
-2. **Amend** the spec (round 0: write it; split it only if "Large apps" calls for it). In the log, note in one or two lines what changed in
+2. **Amend** the spec (round 0: write it; make it modular only if "Modular apps" calls for it). In the log, note in one or two lines what changed in
    the spec and why.
 3. **Commit** everything: `git add -A && git commit -m "round N: <summary>"`. This keeps the
    previous app build and spec revertible.
-4. **Wipe** the app folder: `find <project>/app -mindepth 1 -delete` (double-check the path ends
-   in `/app` first; never wipe anything else).
-5. **Build** with a fresh subagent (Agent tool, `general-purpose`, foreground). Its prompt is
-   exactly the builder brief below with the full spec pasted in. Nothing else: no log, no past
-   feedback, no hints from earlier builds. For a split spec, either paste every spec file into one
-   builder (fine while it all fits comfortably), or build in parallel (see "Parallel build").
-   Every round still rebuilds the whole app from scratch, even if only one part's spec changed.
-6. **Verify** yourself (the parent): go through every acceptance check in every spec file, with extra care on this
+4. **Decide the rebuild scope** (modular apps only; a single-file spec is always a full rebuild).
+   See "Choosing what to rebuild". Write the decision and the reason in the log.
+5. **Delete** what's being rebuilt, before any builder starts.
+   - Full rebuild: `find <project>/app -mindepth 1 -delete` (double-check the path ends in `/app`).
+   - Selective: delete exactly the manifest paths of the chosen modules and of `integration`, and
+     nothing else.
+6. **Build** with fresh subagents (Agent tool, `general-purpose`, foreground). Each prompt is the
+   builder brief below with its spec files pasted in. Nothing else: no log, no past feedback, no
+   hints from earlier builds. Single-file spec: one builder. Modular spec: see "Modular build".
+7. **Verify** yourself (the parent): go through every acceptance check in every spec file
+   (after a selective rebuild too, to catch regressions in modules that were kept), with extra care on this
    round's amendment. Use real evidence: build it, run tests, start it and hit it, take a headless
    screenshot of UI and look at it (stop any server you start). Record pass/fail per check in the log.
-7. **If anything fails:** treat it as a spec problem. Decide why the builder missed it (ambiguous,
+8. **If anything fails:** treat it as a spec problem. Decide why the builder missed it (ambiguous,
    too vague, buried, conflicting with another line, phrased as a negative) and rewrite that part
-   of the spec. Then repeat steps 3-6. **Max 3 build cycles per round.** If it still fails, stop,
+   of the spec. Then repeat steps 3-7. If a selective rebuild fails in a way that points at a
+   kept module (an interface mismatch, say), widen the scope. **Max 3 build cycles per round.** If it still fails, stop,
    leave the best build committed, and tell the user what keeps failing and what you tried in the spec.
-8. **Commit** the final state: `round N: done (cycle k)`.
-9. **Report** to the user (short): what changed in the spec (quote the new lines),
-   how many cycles it took, the check results, and how to open/run the app. If it's a web app, offer to
+9. **Commit** the final state: `round N: done (cycle k)`.
+10. **Report** to the user (short): what changed in the spec (quote the new lines), what was
+   rebuilt (whole app or which modules, and why), how many cycles it took, the check results, and how to open/run the app. If it's a web app, offer to
    host or share it.
 
 ### Builder brief (subagent prompt)
@@ -144,21 +172,58 @@ Round 0 is the user's first message. Every later message about the app is a new 
 >
 > --- SPECIFICATION ---
 > <full contents of ONESHOT.md>
-> (split spec: then each sub-spec, headed `--- spec/<path> ---`, in the order ONESHOT.md lists them)
+> (modular spec: then each module file this builder gets, headed `--- spec/<path> ---`)
 
-### Parallel build (split specs only)
+For module, scaffold and integration builders, replace the first two sentences with their role
+from "Modular build": which folder or worktree they work in, which module they own, that they
+change only that module (or only glue code), and, for a selective rebuild, that the rest of the
+app is already there and may be read. The rest of the brief stays the same.
 
-1. **Scaffold:** one builder gets the whole spec but builds only the skeleton. It sets up the project skeleton
-   in `app/` (stack, folder layout matching every part's `Lives in:`, shared contracts as real
-   code: types, schemas, API stubs, design tokens) and stops there.
-2. **Parts:** one builder per part, in parallel (several Agent calls in one message). Each gets
-   `ONESHOT.md`, its own part file(s), and the files its `Depends on:` links to, nothing else. It
-   writes only inside its `Lives in:` folders and codes against the shared contracts as scaffolded.
-   It still must not read `.oneshot/` or git history.
-3. **Integrate:** one builder gets the whole spec, wires the parts together, makes the app build and
-   run, and runs the end-to-end checks.
-Then the parent verifies as usual. If a part fails, fix its spec and rerun the whole round; the
-scaffold → parts → integrate shape stays the same every time.
+### Choosing what to rebuild (modular apps)
+
+Start from the spec diff of this round (`git diff HEAD~1 -- ONESHOT.md spec/`):
+- A module's internal requirements changed, interface unchanged → rebuild that module only.
+- A module's interface changed → rebuild it and every module that depends on it.
+- A shared contract changed → rebuild every module that links to it.
+- A cross-cutting rule or the stack changed, or the module map itself changed → full rebuild.
+- Unsure how far a change reaches → include more, not less.
+Always regenerate `integration` along with any module. Also do a **full rebuild** when the user
+asks, when comparing models, and before calling the spec finished: a selective rebuild keeps old
+code, and only a full rebuild proves the spec alone still produces the whole app.
+
+### Modular build
+
+Each module builder works in its **own git worktree**, so its changes can be checked:
+`git worktree add -b build/<module> .oneshot/wt/<module> HEAD`. Its brief points at
+`.oneshot/wt/<module>/app/` instead of `app/`.
+
+**Full build:**
+1. **Scaffold** (in the main checkout): one builder gets the whole spec and sets up only the
+   skeleton: stack, a module layout matching the module map, shared contracts and module
+   interfaces as real code (types, schemas, stubs). Commit. Everything it wrote is `integration`.
+2. **Modules:** one builder per module, in parallel (several Agent calls in one message), each in a
+   worktree branched from the scaffold commit. Each gets `ONESHOT.md`, its module file(s) and the
+   files its `Depends on:` links to. It implements only its own module, codes against the
+   interfaces, and commits in its worktree.
+3. **Integrate:** merge, wire up and check (below).
+
+**Selective rebuild:** after the deletion in step 5, one builder per chosen module, in parallel,
+each in a worktree branched from the current commit. Same brief as above, plus: the rest of the
+app is already in place, and it may read the other modules' code but changes only its own module.
+
+**After the module builders finish** (both cases):
+1. For each worktree, `git diff --name-only <base>..build/<module>` lists the paths it touched.
+   Paths that belong to another module in the manifest are a boundary violation: redo that
+   module with a sharper brief or spec, or if the change really is shared glue, move it to
+   `integration`.
+2. Merge each branch into the main checkout; module paths don't overlap, so conflicts mean a
+   boundary problem.
+3. **Integrate:** one builder gets the whole spec and wires the modules together (entry point,
+   routing, dependency lists), makes the app build and run, and runs the end-to-end checks. It
+   changes only glue code.
+4. Update `.oneshot/manifest.json` from the diffs (each module's paths, glue under
+   `integration`), remove the worktrees and branches (`git worktree remove`, `git branch -D build/...`).
+Then the parent verifies as usual (step 7).
 
 Model: default is the current model. If the user names one ("build with sonnet"), pass it as the
 Agent `model`. For another provider's model, use whatever delegation tool the harness offers, with the same brief.
@@ -175,5 +240,7 @@ better (screenshots if UI). Only replace `app/` with a run if the user says so.
 
 - The user asks a question (not a change): just answer it; no round.
 - The user wants to undo a round: `git revert`/checkout the spec at that commit, then run the loop.
+- No manifest yet, or it no longer matches the code (paths missing, unknown files): do a full
+  rebuild, which writes a fresh manifest.
 - Data the app keeps (databases, uploads) that must survive rebuilds: put it outside `app/`
   (e.g. `<project>/data/`) and say so in the spec.

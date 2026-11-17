@@ -8,7 +8,8 @@ detail" or "don't make the button flicker". The fixes live in a chat history, an
 at the level of the model that built it.
 
 With one-shot, every follow-up is written back into a single spec (`ONESHOT.md`). Then the app
-folder is wiped and a fresh subagent rebuilds the whole app from that spec alone. The parent agent
+folder (or, for a modular app, just the affected modules) is wiped and fresh subagents regenerate it
+from that spec alone. The parent agent
 checks the new build against the spec's acceptance checks. If a check fails, it rewrites the spec
 (never the code) and tries again, up to 3 cycles.
 
@@ -30,17 +31,27 @@ Inspired by [this post from Taelin](https://x.com/victortaelin/status/2120912867
 - **Every requirement has an acceptance check** that the parent verifies with real evidence
   (it runs the app, takes screenshots, runs tests).
 
-## Large apps
+## Modular apps
 
-Most apps fit in one `ONESHOT.md`. For a large one, the spec becomes a tree: `ONESHOT.md` stays a
-complete high-level summary (goal, architecture, cross-cutting rules, end-to-end checks) and links
-to sub-specs under `spec/`. There's one file per part, each saying which folders of the app it owns
-and what it depends on, and shared contracts (data model, API shapes) live in `spec/shared/`.
-Read the top file for the overview, or follow the links for the details.
+Most apps fit in one `ONESHOT.md` and are always regenerated whole. For a large app the spec
+becomes a tree where **each file is one module** with one concern: `ONESHOT.md` holds the overview,
+the module map and cross-cutting rules, each module file states its purpose, its interface and
+what it depends on, and shared contracts (data model, API shapes) live in `spec/shared/`. The
+spec asks for code split the same way, with modules talking only through their interfaces. It
+never names file paths; those are the builder's choice.
 
-A split spec can be built by one builder, or in parallel: a scaffold builder sets up the skeleton and
-shared contracts, one builder per part fills in its own folders, and an integration builder wires
-it all together. Every round still regenerates the whole app from scratch.
+That makes **selective rebuilds** possible. After each amendment the supervisor looks at what
+changed in the spec and decides the scope: an internal change rebuilds one module, an interface
+change also rebuilds the modules that depend on it, a shared contract change rebuilds everything
+that uses it, and a cross-cutting change rebuilds the whole app. It deletes exactly that code,
+then regenerates it.
+
+Each module builder runs in its own **git worktree**. Its diff shows which files it actually
+touched; that feeds `.oneshot/manifest.json` (module → code paths, a build output) and catches
+builders that wander into another module's code. An integration step then wires the modules
+together, and every acceptance check is rerun so regressions in kept modules show up. A full
+rebuild still happens before the spec is called finished, since only that proves the spec
+alone produces the whole app.
 
 ## Install
 
@@ -63,7 +74,8 @@ Every later message in that conversation counts as an amendment to the spec. To 
 ```
 <project>/
   ONESHOT.md        the spec (or its top level): spec files are all the builder sees
-  spec/             sub-specs, only for large apps
+  spec/             module specs, only for large apps
+  .oneshot/manifest.json  module → code paths (modular apps)
   app/              generated app, wiped before every build
   .oneshot/log.md   your messages verbatim, how the spec changed, check results per build
   .oneshot/runs/    side-by-side builds for model comparisons
