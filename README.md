@@ -18,6 +18,20 @@ better model comes out, run the spec on it and compare the results.
 
 Inspired by [this post from Taelin](https://x.com/victortaelin/status/2120912867276841258).
 
+## Commits and amends
+
+Regenerating the app every round is the point, but it costs tokens. So each round is one of two kinds:
+
+- **Commit (default):** update the spec, delete the code, regenerate it from the spec alone, verify.
+  It proves the spec is complete at that snapshot.
+- **Amend (cheap):** update the spec the same way, but patch the existing code instead of
+  regenerating it. Same checks, far fewer tokens, but the code may drift from what the spec alone
+  would produce until the next commit.
+
+Say "amend: ..." or "commit: ..." on any message, or set a policy in `.oneshot/config.json`, e.g.
+`{"rounds": "amend", "commit_every": 3}`. With no setting, every round is a commit. A commit (full
+rebuild) also runs before the spec is called finished if anything was amended since the last one.
+
 ## How the spec is written
 
 - **The end state, not the history.** The spec reads as if it had been written that way from the

@@ -1,6 +1,6 @@
 ---
 name: only-oneshot
-description: Build an app from a spec prompt that acts as its source code (one file, or a tree of module specs for large apps). Every later correction or follow-up is written into that spec (never patched into the code). Then the app, or only the affected modules, is deleted and fresh subagents regenerate it from the amended spec alone, and the parent checks the result. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
+description: Build an app from a spec prompt that acts as its source code (one file, or a tree of module specs for large apps). Every later correction or follow-up is written into that spec first. By default the app (or only the affected modules) is then deleted and fresh subagents regenerate it from the amended spec alone ("commit" rounds); "amend" rounds patch the existing code instead, to save tokens. The parent checks the result either way. Use when the user says "only-oneshot", "/only-oneshot", "only one shot", "build this one-shot style", or wants a prompt they can re-run on future models. Once invoked, every later message in the conversation about the app counts as a spec amendment.
 ---
 
 # Only-oneshot: the prompt is the source, the code is the binary
@@ -9,9 +9,17 @@ The spec (`ONESHOT.md`, plus one spec file per module under `spec/` for large ap
 regenerated from the spec, never edited by hand. When this skill finishes, the user has (1) a working
 app and (2) a complete spec that rebuilds it from nothing, on any model, at any time.
 
-**The one rule:** never fix the app by editing its code. Every change goes into the spec, then
-the affected code is deleted and regenerated from scratch (the whole app, or only the affected
-modules of a modular app). (The single exception: the user explicitly says "just patch the code".)
+**The one rule:** the spec always describes the whole app, and every change goes into the spec
+first. How the code then catches up depends on the round type:
+
+- **Commit round (default):** the affected code is deleted and regenerated from the spec alone
+  (the whole app, or the affected modules of a modular app). It proves the spec is complete at
+  this snapshot. This is the skill's way of working.
+- **Amend round (cheap):** the existing code is patched to match the amended spec, the traditional
+  way. Same spec housekeeping, same checks, far fewer tokens, but it proves nothing about the spec
+  on its own: the code may now rely on things the spec doesn't say. The next commit round finds out.
+
+Every round is a commit round unless the user says otherwise (see "Round types").
 
 ## Layout
 
@@ -28,6 +36,7 @@ modules of a modular app). (The single exception: the user explicitly says "just
 
 - Project folder: the one the user names; otherwise a new `<short-kebab-name>/` folder next to the current project. If the current
   directory is empty and clearly meant for this, use it.
+- `.oneshot/config.json` (optional) holds the round-type policy; see "Round types".
 - `git init` the project (local only; never push unless the user asks). Add a `.gitignore` for
   `node_modules`, `.venv`, `dist`, `build`, `.env`, logs.
 
@@ -133,15 +142,37 @@ spec/
 Glue that several modules touch (entry point, routing, dependency lists, build config) belongs to
 `integration`, which is regenerated whenever any module is.
 
+## Round types
+
+Default: **every round is a commit round.** The user can change that:
+- Per message: "amend: ...", "quick fix", "just patch it" → amend round. "commit: ...",
+  "rebuild" → commit round.
+- As a standing policy, saved in `.oneshot/config.json` so it outlasts the conversation:
+  - `{"rounds": "commit"}`: every round is a commit (the default, also when the file is missing).
+  - `{"rounds": "amend"}`: every round is an amend; commit only when asked.
+  - `{"rounds": "amend", "commit_every": 3}`: amend, but every 3rd round is a commit.
+  A per-message word beats the policy.
+- Round 0 is always a commit (there's no code to patch yet).
+- Before calling the spec finished, comparing models or publishing the spec, run a commit round
+  (a full rebuild) if any amend happened since the last full one.
+
+Keep count in the log: `amends since last commit: N`. Mention it in the report when it's above 0,
+since that's how far the code may have drifted from what the spec alone would produce.
+
 ## The loop (every round)
 
-Round 0 is the user's first message. Every later message about the app is a new round.
+Round 0 is the user's first message. Every later message about the app is a new round. Decide
+the round type first (see "Round types") and write it in the log heading: `## Round N (commit)`.
 
-1. **Log** the user's message verbatim in `.oneshot/log.md` under `## Round N`.
+1. **Log** the user's message verbatim in `.oneshot/log.md` under `## Round N (commit|amend)`.
 2. **Amend** the spec (round 0: write it; make it modular only if "Modular apps" calls for it). In the log, note in one or two lines what changed in
    the spec and why.
 3. **Commit** everything: `git add -A && git commit -m "round N: <summary>"`. This keeps the
    previous app build and spec revertible.
+   **Amend round:** skip steps 4-6 and do this instead: one fresh builder gets the whole spec, the
+   spec diff of this round (`git diff HEAD~1 -- ONESHOT.md spec/`) and the existing `app/`, and
+   changes the code so the app matches the amended spec, touching as little as it can. Then
+   continue at step 7. If the patch fails verification twice, switch this round to a commit.
 4. **Decide the rebuild scope** (modular apps only; a single-file spec is always a full rebuild).
    See "Choosing what to rebuild". Write the decision and the reason in the log.
 5. **Delete** what's being rebuilt, before any builder starts.
@@ -160,9 +191,10 @@ Round 0 is the user's first message. Every later message about the app is a new 
    of the spec. Then repeat steps 3-7. If a selective rebuild fails in a way that points at a
    kept module (an interface mismatch, say), widen the scope. **Max 3 build cycles per round.** If it still fails, stop,
    leave the best build committed, and tell the user what keeps failing and what you tried in the spec.
-9. **Commit** the final state: `round N: done (cycle k)`.
-10. **Report** to the user (short): what changed in the spec (quote the new lines), what was
-   rebuilt (whole app or which modules, and why), how many cycles it took, the check results, and how to open/run the app. If it's a web app, offer to
+9. **Commit** the final state: `round N: done (commit, cycle k)` or `round N: done (amend)`.
+10. **Report** to the user (short): the round type, what changed in the spec (quote the new
+   lines), what was rebuilt or patched (whole app or which modules, and why), amends since the
+   last commit if any, how many cycles it took, the check results, and how to open/run the app. If it's a web app, offer to
    host or share it.
 
 ### Builder brief (subagent prompt)
