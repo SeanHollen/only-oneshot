@@ -83,6 +83,13 @@ Rules:
   round 2"). The builder has never seen any of it. If the user likes something the last build did by
   chance, describe it concretely in the spec so it's kept.
 - Add an acceptance check for each amendment, plus checks for earlier requirements that matter.
+- **Anything that outlives a build is a contract and is specified exactly:** saved data formats
+  (local storage keys and value shapes, data files, database schemas), URLs and API shapes other
+  things call, file names users rely on. Code is regenerated; data isn't. If the spec leaves a
+  format open, each rebuild invents a new one and silently orphans existing data.
+- **Edge cases the user would notice** get a line too: what an emptied field falls back to, how
+  typed junk (letters, commas, a second decimal point) is handled, what zero shows. Otherwise
+  each build picks its own answer.
 
 ## Modular apps: one spec file per module
 
@@ -155,6 +162,19 @@ Default: **every round is a commit round.** The user can change that:
 - Round 0 is always a commit (there's no code to patch yet).
 - Before calling the spec finished, comparing models or publishing the spec, run a commit round
   (a full rebuild) if any amend happened since the last full one.
+
+**Commit after amends: drift audit.** When the last commit round was followed by amends, the
+amended code may do things the spec never says. Before wiping:
+1. Write a small probe script for the app (e.g. headless browser or HTTP calls) that exercises
+   every spec'd behavior plus edge cases: empty, zero, junk input, limits, reload/restart with
+   saved data, and saved data written by the current build.
+2. Read the current code and list behaviors the spec doesn't cover. Add the ones the user would
+   notice or that touch saved data to the spec (positive phrasing, as usual) before the rebuild.
+After the rebuild, run the same probe against the old build (from git) and the new one and compare.
+Each difference is either a spec gap (fix the spec, rebuild again within the cycle limit) or
+freedom the spec intentionally leaves open (note it in the report). Also load data saved by the old
+build into the new one: it must still read it. This is worth doing on any commit round when
+tokens allow; it's required after amends.
 
 Keep count in the log: `amends since last commit: N`. Mention it in the report when it's above 0,
 since that's how far the code may have drifted from what the spec alone would produce.
