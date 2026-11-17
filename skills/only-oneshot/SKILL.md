@@ -46,7 +46,8 @@ modules of a modular app). (The single exception: the user explicitly says "just
 Rules:
 - **Start from the user's original prompt, kept close to their words.** Organize it into the sections,
   but don't invent features. Where they left something open, leave it open (that's the room a
-  better model uses).
+  better model uses). Obvious-seeming extras (edit, delete, rename, settings, export) count as
+  features too: offer them in the report as suggestions, and add them only if the user says yes.
 - **State the desired end state, in positive terms.** The spec describes what the app *is*, not
   what went wrong in some earlier build. A different model may never make that mistake, so a
   "don't do X" line is noise for it.
@@ -106,8 +107,11 @@ spec/
   submodules uses `README.md` as its top file, pointing to its submodule files the same way.
 - **No file paths in the spec.** Where the code for a module lives is an implementation choice of
   the builder; it's tracked in `.oneshot/manifest.json`, which is a build output.
-- **Shared contracts** (data model, API shapes, events, design tokens) live in exactly one file
-  under `spec/shared/`, and modules link to them instead of restating them.
+- **Shared contracts** (data model, API shapes, events, design tokens) live under `spec/shared/`,
+  each defined in exactly one place, and modules link to them instead of restating them. Keep
+  each contract file narrow, split by who uses it: the stored record (storage and its callers)
+  is a different file from the API response shape (API and UI). A module links only to the
+  contracts it actually uses, so a change to one doesn't drag unrelated modules into a rebuild.
 - **Every spec file is reachable from `ONESHOT.md`** through links.
 - **Amendments go in the module that owns the behavior.** Update `ONESHOT.md` too when the change
   affects the overview, the module map, a cross-cutting rule or an end-to-end check. If a change
@@ -184,7 +188,10 @@ app is already there and may be read. The rest of the brief stays the same.
 Start from the spec diff of this round (`git diff HEAD~1 -- ONESHOT.md spec/`):
 - A module's internal requirements changed, interface unchanged → rebuild that module only.
 - A module's interface changed → rebuild it and every module that depends on it.
-- A shared contract changed → rebuild every module that links to it.
+- A shared contract changed → rebuild every module that uses the changed part. An added field
+  that a module never reads (say, a computed field in an API response, from storage's point of
+  view) leaves that module alone. If a small change keeps forcing wide rebuilds, the contract is
+  too broad: split it.
 - A cross-cutting rule or the stack changed, or the module map itself changed → full rebuild.
 - Unsure how far a change reaches → include more, not less.
 Always regenerate `integration` along with any module. Also do a **full rebuild** when the user
